@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "luisrioja.chargelimit",
+  "name": "Charge limit",
+  "version": "1.0.0",
+  "author": "Luis Rioja",
+  "description": "Bar widget to cycle the battery charge stop threshold (e.g. 100 / 90 / 80)",
+  "homepage": "https://github.com/luisrioja/omarchy-chargelimit",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "ChargeLimit.qml" },
+  "barWidget": {
+    "displayName": "Charge limit",
+    "description": "Battery charge stop threshold; click to cycle",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

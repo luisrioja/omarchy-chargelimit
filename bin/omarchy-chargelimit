@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# omarchy-chargelimit — cycle the battery charge *stop* threshold.
+#
+# Works on any laptop that exposes
+#   /sys/class/power_supply/BAT*/charge_control_end_threshold
+# (ThinkPads via thinkpad_acpi, plus many other laptops with recent kernels).
+# Dual-battery machines (e.g. ThinkPad T470s/T480 with a slice) are handled:
+# every BAT* that supports it gets the same threshold.
+#
+#   omarchy-chargelimit status        print the current stop threshold
+#   omarchy-chargelimit list          print the battery sysfs dirs it will touch
+#   omarchy-chargelimit set <n>       set stop threshold <n> (start = n - GAP), persist it
+#   omarchy-chargelimit apply         re-apply the persisted value (used by the boot service)
+#   omarchy-chargelimit cycle         next preset (wraps)
+#   omarchy-chargelimit cycle-back    previous preset (wraps)
+#
+# Needs root for set/apply/cycle (writes to /sys). The bar widget calls it with
+# `sudo -n`; see etc/sudoers.d/omarchy-chargelimit (%wheel, no password).
+#
+# Environment overrides:
+#   CHARGE_LIMIT_PRESETS   space-separated, high to low   (default: "100 90 80")
+#   CHARGE_LIMIT_GAP       start = stop - GAP             (default: 5)
+#   CHARGE_LIMIT_STATE     persisted-value file          (default: /var/lib/omarchy-chargelimit/limit)
+set -uo pipefail
+
+read -ra PRESETS <<< "${CHARGE_LIMIT_PRESETS:-100 90 80}"
+GAP=${CHARGE_LIMIT_GAP:-5}
+STATE=${CHARGE_LIMIT_STATE:-/var/lib/omarchy-chargelimit/limit}
+SYS=/sys/class/power_supply
+
+batteries() {
+  local d
+  for d in "$SYS"/BAT*; do
+    [ -e "$d/charge_control_end_threshold" ] && printf '%s\n' "$d"
+  done
+}
+
+clamp() {
+  local n=${1:-100}
+  [[ $n =~ ^[0-9]+$ ]] || n=100
+  ((n < 40))  && n=40
+  ((n > 100)) && n=100
+  printf '%s' "$n"
+}
+
+current() {
+  local d
+  for d in $(batteries); do cat "$d/charge_control_end_threshold" 2>/dev/null; return; done
+  printf '100'
+}
+
+# Write start=0 first to dodge thinkpad_acpi rejecting a transient start >= end.
+# wrote=1 if at least one battery accepted the stop threshold.
+apply() {
+  local stop start d end sta wrote=0
+  stop=$(clamp "${1:-100}")
+  if ((stop >= 100)); then start=0; else start=$((stop - GAP)); ((start < 0)) && start=0; fi
+  for d in $(batteries); do
+    end="$d/charge_control_end_threshold"
+    sta="$d/charge_control_start_threshold"
+    [ -e "$sta" ] && printf '%s\n' 0 > "$sta" 2>/dev/null
+    printf '%s\n' "$stop" > "$end" 2>/dev/null && wrote=1
+    [ -e "$sta" ] && printf '%s\n' "$start" > "$sta" 2>/dev/null
+  done
+  [ "$wrote" = 1 ]
+}
+
+save() {
+  install -d -m 0755 "${STATE%/*}"
+  printf '%s\n' "$(clamp "$1")" > "$STATE"
+  chmod 0644 "$STATE" 2>/dev/null || true
+}
+
+nextp() {
+  local cur=$1 dir=$2 n=${#PRESETS[@]} i
+  for i in "${!PRESETS[@]}"; do
+    [ "${PRESETS[$i]}" = "$cur" ] && { printf '%s' "${PRESETS[$(((i + dir + n) % n))]}"; return; }
+  done
+  printf '%s' "${PRESETS[0]}"
+}
+
+cmd=${1:-status}
+case "$cmd" in
+  status) current ;;
+  list)   batteries ;;
+  set)    save "${2:-100}"; apply "${2:-100}" ;;
+  apply)  apply "$(cat "$STATE" 2>/dev/null || printf '100')" ;;
+  cycle|cycle-back)
+    [ "$cmd" = cycle ] && d=1 || d=-1
+    v=$(nextp "$(current)" "$d")
+    save "$v"; apply "$v"; printf '%s\n' "$v"
+    ;;
+  *) echo "usage: omarchy-chargelimit {status|list|set <n>|apply|cycle|cycle-back}" >&2; exit 2 ;;
+esac

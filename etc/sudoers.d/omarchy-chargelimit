@@ -1,0 +1,3 @@
+# Let desktop users (wheel) set the battery charge threshold without a password.
+# The script only writes charge_control_*_threshold under /sys; it takes no paths.
+%wheel ALL=(root) NOPASSWD: /usr/local/bin/omarchy-chargelimit

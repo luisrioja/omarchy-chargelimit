@@ -1,0 +1,18 @@
+# omarchy-chargelimit: re-apply the saved charge threshold as soon as the
+# kernel exposes charge_control_end_threshold, instead of hoping the boot
+# service runs after the driver that provides it. Also covers batteries that
+# are hot-plugged (removable packs, ThinkPad slice batteries).
+ACTION!="add", GOTO="omarchy_chargelimit_end"
+
+# Battery drivers that expose the threshold on the power_supply device itself.
+SUBSYSTEM=="power_supply", KERNEL=="BAT*", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}+="omarchy-chargelimit.service"
+
+# Platform drivers that add the threshold to an existing battery through an
+# ACPI battery hook (thinkpad_acpi and friends). A module's "add" uevent is
+# sent after its init function returns, so the hook is in place by then.
+SUBSYSTEM=="module", \
+  KERNEL=="thinkpad_acpi|asus_wmi|huawei_wmi|lg_laptop|system76_acpi|dell_laptop|toshiba_acpi|msi_ec|samsung_galaxybook|cros_charge_control", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}+="omarchy-chargelimit.service"
+
+LABEL="omarchy_chargelimit_end"

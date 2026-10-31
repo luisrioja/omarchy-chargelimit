@@ -3,6 +3,7 @@
 #   - /usr/local/bin/omarchy-chargelimit          (the helper script)
 #   - /etc/sudoers.d/omarchy-chargelimit          (%wheel, NOPASSWD, this script only)
 #   - /etc/systemd/system/omarchy-chargelimit.service  (re-apply on boot)
+#   - /etc/udev/rules.d/90-omarchy-chargelimit.rules   (start it when the battery knob appears)
 #   - /etc/omarchy-chargelimit.conf               (presets + gap; kept if present)
 #
 # The widget itself (manifest.json + ChargeLimit.qml) is a normal Omarchy plugin:
@@ -37,6 +38,10 @@ install -m 0644 etc/systemd/system/omarchy-chargelimit.service \
   /etc/systemd/system/omarchy-chargelimit.service
 systemctl daemon-reload
 systemctl enable omarchy-chargelimit.service
+
+install -m 0644 etc/udev/rules.d/90-omarchy-chargelimit.rules \
+  /etc/udev/rules.d/90-omarchy-chargelimit.rules
+udevadm control --reload
 
 echo
 echo "Backend installed. Quick check:"

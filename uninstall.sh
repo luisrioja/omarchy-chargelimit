@@ -8,6 +8,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 systemctl disable --now omarchy-chargelimit.service 2>/dev/null || true
+rm -f /etc/udev/rules.d/90-omarchy-chargelimit.rules
+udevadm control --reload 2>/dev/null || true
 rm -f /etc/systemd/system/omarchy-chargelimit.service
 rm -f /etc/sudoers.d/omarchy-chargelimit
 rm -f /usr/local/bin/omarchy-chargelimit

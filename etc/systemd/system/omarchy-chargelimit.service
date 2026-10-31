@@ -1,6 +1,8 @@
 [Unit]
 Description=Re-apply the saved battery charge threshold
 Documentation=https://github.com/luisrioja/omarchy-chargelimit
+# Also started by /etc/udev/rules.d/90-omarchy-chargelimit.rules whenever a
+# battery or a battery-hook platform driver (thinkpad_acpi, ...) appears.
 ConditionPathExists=/var/lib/omarchy-chargelimit/limit
 
 [Service]

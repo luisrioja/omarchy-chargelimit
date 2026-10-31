@@ -35,8 +35,8 @@ charge-threshold support.
 ## Install
 
 **1. The privileged backend** (helper script + a `%wheel` NOPASSWD sudoers line
-scoped to that one script + a boot service that re-applies the threshold, since
-the EC forgets it on power-off):
+scoped to that one script + a boot service and udev rule that re-apply the
+threshold, since the EC forgets it on power-off):
 
 ```bash
 git clone https://github.com/luisrioja/omarchy-chargelimit.git
@@ -101,6 +101,10 @@ sudo omarchy-chargelimit cycle    # next preset
 - The value you pick is saved to `/var/lib/omarchy-chargelimit/limit` (only
   once the kernel has accepted it); the
   `omarchy-chargelimit.service` oneshot re-applies it on every boot.
+- A udev rule (`/etc/udev/rules.d/90-omarchy-chargelimit.rules`) starts that
+  service when a battery appears or when a driver that adds the threshold knob
+  (`thinkpad_acpi`, `asus_wmi`, …) finishes loading, so the value lands even if
+  the driver loads late in boot, and again when you hot-plug a battery.
 - The QML widget never touches `/sys` directly — it shells out to
   `sudo -n /usr/local/bin/omarchy-chargelimit`, which the sudoers snippet allows
   for the `wheel` group without a password. Prefer polkit? Drop the sudoers file

@@ -11,7 +11,7 @@
 #   omarchy-chargelimit list          print the battery sysfs dirs it will touch
 #   omarchy-chargelimit presets       print the presets it cycles through
 #   omarchy-chargelimit set <n>       set stop threshold <n> (start = n - GAP), persist it
-#   omarchy-chargelimit apply         re-apply the persisted value (used by the boot service)
+#   omarchy-chargelimit apply         re-apply the persisted value (boot service / udev rule)
 #   omarchy-chargelimit cycle         next lower preset (wraps to the highest)
 #   omarchy-chargelimit cycle-back    next higher preset (wraps to the lowest)
 #
@@ -142,7 +142,12 @@ case "$cmd" in
     v=$(clamp "${2:-100}")
     apply "$v" && save "$v"
     ;;
-  apply)   apply "$(cat "$STATE" 2>/dev/null || printf '100')" ;;
+  apply)
+    # Boot/udev path: the knob can show up a moment after the uevent that
+    # started us (e.g. battery driver loaded after thinkpad_acpi). Wait up to 5 s.
+    for _ in {1..20}; do [ -n "$(batteries)" ] && break; sleep 0.25; done
+    apply "$(cat "$STATE" 2>/dev/null || printf '100')"
+    ;;
   cycle|cycle-back)
     [ "$cmd" = cycle ] && d=1 || d=-1
     v=$(nextp "$(current)" "$d")

@@ -9,24 +9,62 @@
 #
 #   omarchy-chargelimit status        print the current stop threshold
 #   omarchy-chargelimit list          print the battery sysfs dirs it will touch
+#   omarchy-chargelimit presets       print the presets it cycles through
 #   omarchy-chargelimit set <n>       set stop threshold <n> (start = n - GAP), persist it
 #   omarchy-chargelimit apply         re-apply the persisted value (used by the boot service)
-#   omarchy-chargelimit cycle         next preset (wraps)
-#   omarchy-chargelimit cycle-back    previous preset (wraps)
+#   omarchy-chargelimit cycle         next lower preset (wraps to the highest)
+#   omarchy-chargelimit cycle-back    next higher preset (wraps to the lowest)
 #
 # Needs root for set/apply/cycle (writes to /sys). The bar widget calls it with
 # `sudo -n`; see etc/sudoers.d/omarchy-chargelimit (%wheel, no password).
 #
-# Environment overrides:
-#   CHARGE_LIMIT_PRESETS   space-separated, high to low   (default: "100 90 80")
-#   CHARGE_LIMIT_GAP       start = stop - GAP             (default: 5)
-#   CHARGE_LIMIT_STATE     persisted-value file          (default: /var/lib/omarchy-chargelimit/limit)
+# Configuration: /etc/omarchy-chargelimit.conf (KEY=value lines, # comments)
+#   PRESETS   space-separated stop thresholds      (default: "100 90 80")
+#   GAP       start = stop - GAP                   (default: 5)
+#
+# sudo resets the environment, so the widget only ever sees the config file.
+# When running as root directly, these environment variables win over it:
+#   CHARGE_LIMIT_PRESETS, CHARGE_LIMIT_GAP,
+#   CHARGE_LIMIT_STATE  (persisted-value file, default /var/lib/omarchy-chargelimit/limit)
+#   CHARGE_LIMIT_CONF   (config file, default /etc/omarchy-chargelimit.conf)
 set -uo pipefail
 
-read -ra PRESETS <<< "${CHARGE_LIMIT_PRESETS:-100 90 80}"
-GAP=${CHARGE_LIMIT_GAP:-5}
+CONF=${CHARGE_LIMIT_CONF:-/etc/omarchy-chargelimit.conf}
 STATE=${CHARGE_LIMIT_STATE:-/var/lib/omarchy-chargelimit/limit}
 SYS=/sys/class/power_supply
+
+clamp() {
+  local n=${1:-100}
+  [[ $n =~ ^[0-9]+$ ]] || n=100
+  n=$((10#$n))
+  ((n < 40))  && n=40
+  ((n > 100)) && n=100
+  printf '%s' "$n"
+}
+
+# Parse the config file instead of sourcing it: it is read by a root process.
+conf_presets='' conf_gap=''
+if [ -r "$CONF" ]; then
+  while IFS='=' read -r key val || [ -n "$key" ]; do
+    key=${key//[[:space:]]/}
+    val=${val%%#*}
+    val=${val//[\"\']/}
+    case $key in
+      PRESETS) conf_presets=$val ;;
+      GAP)     conf_gap=${val//[[:space:]]/} ;;
+    esac
+  done < "$CONF"
+fi
+
+# Presets: clamped, de-duplicated, sorted high to low.
+raw_presets=${CHARGE_LIMIT_PRESETS:-${conf_presets:-100 90 80}}
+PRESETS=()
+for p in $raw_presets; do PRESETS+=("$(clamp "$p")"); done
+mapfile -t PRESETS < <(printf '%s\n' "${PRESETS[@]}" | sort -rnu)
+((${#PRESETS[@]} > 0)) && [ -n "${PRESETS[0]}" ] || PRESETS=(100 90 80)
+
+GAP=${CHARGE_LIMIT_GAP:-${conf_gap:-5}}
+[[ $GAP =~ ^[0-9]+$ ]] && ((10#$GAP <= 100)) && GAP=$((10#$GAP)) || GAP=5
 
 batteries() {
   local d
@@ -35,60 +73,80 @@ batteries() {
   done
 }
 
-clamp() {
-  local n=${1:-100}
-  [[ $n =~ ^[0-9]+$ ]] || n=100
-  ((n < 40))  && n=40
-  ((n > 100)) && n=100
-  printf '%s' "$n"
-}
-
 current() {
-  local d
-  for d in $(batteries); do cat "$d/charge_control_end_threshold" 2>/dev/null; return; done
+  local d v
+  for d in $(batteries); do
+    v=$(cat "$d/charge_control_end_threshold" 2>/dev/null)
+    [[ $v =~ ^[0-9]+$ ]] && { printf '%s' "$v"; return; }
+  done
   printf '100'
 }
 
 # Write start=0 first to dodge thinkpad_acpi rejecting a transient start >= end.
-# wrote=1 if at least one battery accepted the stop threshold.
+# Succeeds only if every supported battery accepted the stop threshold.
 apply() {
-  local stop start d end sta wrote=0
+  local stop start d end sta found=0 failed=0
   stop=$(clamp "${1:-100}")
   if ((stop >= 100)); then start=0; else start=$((stop - GAP)); ((start < 0)) && start=0; fi
   for d in $(batteries); do
+    found=1
     end="$d/charge_control_end_threshold"
     sta="$d/charge_control_start_threshold"
-    [ -e "$sta" ] && printf '%s\n' 0 > "$sta" 2>/dev/null
-    printf '%s\n' "$stop" > "$end" 2>/dev/null && wrote=1
-    [ -e "$sta" ] && printf '%s\n' "$start" > "$sta" 2>/dev/null
+    [ -e "$sta" ] && printf '%s\n' 0 2>/dev/null >"$sta"
+    if ! printf '%s\n' "$stop" 2>/dev/null >"$end"; then
+      echo "omarchy-chargelimit: could not write $end" >&2
+      failed=1
+      continue
+    fi
+    [ -e "$sta" ] && printf '%s\n' "$start" 2>/dev/null >"$sta"
   done
-  [ "$wrote" = 1 ]
+  if ((!found)); then
+    echo "omarchy-chargelimit: no battery exposes charge_control_end_threshold" >&2
+    return 1
+  fi
+  ((!failed))
 }
 
 save() {
-  install -d -m 0755 "${STATE%/*}"
-  printf '%s\n' "$(clamp "$1")" > "$STATE"
-  chmod 0644 "$STATE" 2>/dev/null || true
+  install -d -m 0755 "${STATE%/*}" &&
+    printf '%s\n' "$(clamp "$1")" >"$STATE" &&
+    { chmod 0644 "$STATE" 2>/dev/null || true; }
 }
 
+# dir=1: next preset below cur (wraps to the highest).
+# dir=-1: next preset above cur (wraps to the lowest).
+# Works when cur is not a preset too (e.g. 85 -> 80 / 90).
 nextp() {
   local cur=$1 dir=$2 n=${#PRESETS[@]} i
-  for i in "${!PRESETS[@]}"; do
-    [ "${PRESETS[$i]}" = "$cur" ] && { printf '%s' "${PRESETS[$(((i + dir + n) % n))]}"; return; }
-  done
-  printf '%s' "${PRESETS[0]}"
+  [[ $cur =~ ^[0-9]+$ ]] || cur=100
+  cur=$((10#$cur))
+  if ((dir > 0)); then
+    for ((i = 0; i < n; i++)); do
+      ((PRESETS[i] < cur)) && { printf '%s' "${PRESETS[i]}"; return; }
+    done
+    printf '%s' "${PRESETS[0]}"
+  else
+    for ((i = n - 1; i >= 0; i--)); do
+      ((PRESETS[i] > cur)) && { printf '%s' "${PRESETS[i]}"; return; }
+    done
+    printf '%s' "${PRESETS[n - 1]}"
+  fi
 }
 
 cmd=${1:-status}
 case "$cmd" in
-  status) current ;;
-  list)   batteries ;;
-  set)    save "${2:-100}"; apply "${2:-100}" ;;
-  apply)  apply "$(cat "$STATE" 2>/dev/null || printf '100')" ;;
+  status)  current; echo ;;
+  list)    batteries ;;
+  presets) printf '%s\n' "${PRESETS[*]}" ;;
+  set)
+    v=$(clamp "${2:-100}")
+    apply "$v" && save "$v"
+    ;;
+  apply)   apply "$(cat "$STATE" 2>/dev/null || printf '100')" ;;
   cycle|cycle-back)
     [ "$cmd" = cycle ] && d=1 || d=-1
     v=$(nextp "$(current)" "$d")
-    save "$v"; apply "$v"; printf '%s\n' "$v"
+    apply "$v" && save "$v" && printf '%s\n' "$v"
     ;;
-  *) echo "usage: omarchy-chargelimit {status|list|set <n>|apply|cycle|cycle-back}" >&2; exit 2 ;;
+  *) echo "usage: omarchy-chargelimit {status|list|presets|set <n>|apply|cycle|cycle-back}" >&2; exit 2 ;;
 esac

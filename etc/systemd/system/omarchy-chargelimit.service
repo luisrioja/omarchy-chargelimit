@@ -1,7 +1,6 @@
 [Unit]
 Description=Re-apply the saved battery charge threshold
 Documentation=https://github.com/luisrioja/omarchy-chargelimit
-After=multi-user.target
 ConditionPathExists=/var/lib/omarchy-chargelimit/limit
 
 [Service]

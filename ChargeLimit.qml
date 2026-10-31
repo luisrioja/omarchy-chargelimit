@@ -6,8 +6,10 @@ import qs.Ui
 
 // Battery charge stop-threshold toggle for the Omarchy (quickshell) bar.
 //
-//   left click  / wheel up   -> next preset   (100 -> 90 -> 80 -> 100)
-//   right click / wheel down  -> previous preset
+//   left click  / wheel up   -> next lower preset  (100 -> 90 -> 80 -> 100)
+//   right click / wheel down  -> next higher preset
+//
+// Presets live in /etc/omarchy-chargelimit.conf, so the tooltip stays generic.
 //
 // Reads the live threshold from /sys (world-readable); writes it through
 // `sudo -n /usr/local/bin/omarchy-chargelimit` (see the repo's install.sh and
@@ -83,11 +85,9 @@ BarWidget {
     text: (root.capped ? "󰂂 " : "󰁹 ") + root.limit
     fontSize: Style.font.caption
     horizontalMargin: 6
-    tooltipText: root.capped
-      ? ("Charge limit " + root.limit + "%\n" +
-         "click: next preset\nright click / wheel: previous")
-      : ("No charge limit (100%)\n" +
-         "click: cap at 90%\nright click: cap at 80%")
+    tooltipText: (root.capped ? ("Charge limit " + root.limit + "%")
+                              : "No charge limit (100%)") +
+      "\nclick / wheel up: lower preset\nright click / wheel down: higher preset"
     onPressed: function (btn) {
       root.cycle(btn === Qt.RightButton)
     }

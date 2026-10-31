@@ -4,13 +4,14 @@
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
-  exec sudo -- "$0" "$@"
+  exec sudo -- bash "$(readlink -f -- "$0")" "$@"
 fi
 
 systemctl disable --now omarchy-chargelimit.service 2>/dev/null || true
 rm -f /etc/systemd/system/omarchy-chargelimit.service
 rm -f /etc/sudoers.d/omarchy-chargelimit
 rm -f /usr/local/bin/omarchy-chargelimit
+rm -f /etc/omarchy-chargelimit.conf
 rm -rf /var/lib/omarchy-chargelimit
 systemctl daemon-reload
 
